@@ -11,7 +11,6 @@ input, select{ margin-right:10px; padding:5px; }
 .header{ display:flex; align-items:center; gap:15px; background:#f8f8f8; padding:10px; border-radius:8px; margin-bottom:10px; }
 .legend{ background:white; padding:10px; border-radius:8px; box-shadow:0 0 5px rgba(0,0,0,0.3); line-height:25px; }
 .legend span:hover{ background:#eee; cursor:pointer; }
-.slider-container{ margin-top:10px; }
 </style>
 </head>
 <body>
@@ -26,10 +25,6 @@ Fournisseur : <select id="filtreNom"><option value="">Tous</option></select>
 Ville : <select id="filtreVille"><option value="">Toutes</option></select>
 CP : <select id="filtreCP"><option value="">Tous</option></select>
 Produit : <select id="filtreProduit"><option value="">Tous</option></select>
-<div class="slider-container">
-Distance (km) : <input type="range" id="distanceSlider" min="0" max="100" value="0" step="1" oninput="updateDistanceValue()">
-<span id="distanceValue">0 km</span>
-</div>
 <button onclick="filtrer()">Filtrer</button>
 <button onclick="resetMap()">Reset</button>
 </div>
@@ -40,139 +35,304 @@ Distance (km) : <input type="range" id="distanceSlider" min="0" max="100" value=
 <script src="https://unpkg.com/papaparse@5.4.1/papaparse.min.js"></script>
 
 <script>
+
 // Carte
 var ileDeFranceBounds=[[48.0,1.5],[49.2,3.5]];
-var map=L.map('map',{maxBounds: ileDeFranceBounds,maxBoundsViscosity:1}).setView([48.85,2.35],10);
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{ attribution:'© OpenStreetMap' }).addTo(map);
-L.rectangle(ileDeFranceBounds,{ color:"red", weight:4, fill:false }).addTo(map);
 
-var markers=[]; var fournisseursSet = new Set(); var villesSet = new Set(); var cpsSet = new Set(); var produitsSet = new Set();
-var villeCoords = {}; // coordonnées pour chaque ville
+var map=L.map('map',{
+maxBounds: ileDeFranceBounds,
+maxBoundsViscosity:1
+}).setView([48.85,2.35],10);
+
+L.tileLayer(
+'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+{ attribution:'© OpenStreetMap' }
+).addTo(map);
+
+L.rectangle(
+ileDeFranceBounds,
+{ color:"red", weight:4, fill:false }
+).addTo(map);
+
+var markers=[];
+var fournisseursSet = new Set();
+var villesSet = new Set();
+var cpsSet = new Set();
+var produitsSet = new Set();
 
 // Icônes
-function getIcon(color){return new L.Icon({iconUrl:'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-'+color+'.png',shadowUrl:'https://unpkg.com/leaflet@1.7.1/dist/images/marker-shadow.png',iconSize:[25,41],iconAnchor:[12,41]});}
+function getIcon(color){
+return new L.Icon({
+iconUrl:'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-'+color+'.png',
+shadowUrl:'https://unpkg.com/leaflet@1.7.1/dist/images/marker-shadow.png',
+iconSize:[25,41],
+iconAnchor:[12,41]
+});
+}
 
-// Fournisseurs
+// Fournisseurs et icônes
 var fournisseurIcons={
-"Loxam":getIcon("blue"),"Point P":getIcon("red"),"Raboni":getIcon("green"),"Cemex":getIcon("orange"),
-"CAUPAMAT CADENZ":getIcon("violet"),"Tersen":getIcon("yellow"),"pum":getIcon("black"),"YPREMA":getIcon("grey"),
-"Fransbonhomme":getIcon("blue"),"BSM":getIcon("red"),"SODEXTRA":getIcon("green"),"COLBER":getIcon("orange"),
-"SOL 78":getIcon("grey"),"SPME":getIcon("blue"),"VIACOV":getIcon("orange"),"Bouvelot TP":getIcon("black"),
-"CHEUTIN":getIcon("violet"),"GO POMPE":getIcon("green"),"SNB":getIcon("blue"),"EVA INDUSTRIES":getIcon("red"),
-"EVO LOCATION":getIcon("green"),"UTD":getIcon("orange"),"SCIABBARRASI RENT":getIcon("violet"),"LM DISTRIBUTION":getIcon("yellow"),
-"IDF MARQUAGE":getIcon("grey"),"EUROPIERRE":getIcon("blue"),"RFM":getIcon("red"),"ATPL CASELAS":getIcon("green")
+
+"Loxam":getIcon("blue"),
+"Point P":getIcon("red"),
+"Raboni":getIcon("green"),
+"Cemex":getIcon("orange"),
+"CAUPAMAT CADENZ":getIcon("violet"),
+"Tersen":getIcon("yellow"),
+"pum":getIcon("black"),
+"YPREMA":getIcon("grey"),
+"Fransbonhomme":getIcon("blue"),
+"BSM":getIcon("red"),
+"SODEXTRA":getIcon("green"),
+"COLBER":getIcon("orange"),
+"SOL 78":getIcon("grey"),
+"SPME":getIcon("blue"),
+"VIACOV":getIcon("orange"),
+"Bouvelot TP":getIcon("black"),
+"CHEUTIN":getIcon("violet"),
+"GO POMPE":getIcon("green"),
+"SNB":getIcon("blue"),
+"EVA INDUSTRIES":getIcon("red"),
+"EVO LOCATION":getIcon("green"),
+"UTD":getIcon("orange"),
+"SCIABBARRASI RENT":getIcon("violet"),
+"LM DISTRIBUTION":getIcon("yellow"),
+"IDF MARQUAGE":getIcon("grey"),
+"EUROPIERRE":getIcon("blue"),
+"RFM":getIcon("red"),
+"ATPL CASELAS":getIcon("green")
+
 };
+
 var defaultIcon=getIcon("grey");
 
 // Normalisation
-function normalize(str){return str ? str.normalize("NFD").replace(/[\u0300-\u036f]/g,"").trim().toLowerCase() : "";}
+function normalize(str){
+return str ?
+str.normalize("NFD")
+.replace(/[\u0300-\u036f]/g,"")
+.trim()
+.toLowerCase()
+: "";
+}
 
 // Charger CSV
-fetch("./data.csv").then(r=>r.text()).then(text=>{
-  Papa.parse(text,{header:true,skipEmptyLines:true,complete:function(results){
-    results.data.forEach(row=>{
-      var cleanRow={}; for(let key in row){ cleanRow[normalize(key)] = row[key]; } row = cleanRow;
-      var lat=parseFloat(row["latitude"]?.replace(",", ".")); var lng=parseFloat(row["longitude"]?.replace(",", "."));
-      if(isNaN(lat)||isNaN(lng)) return;
-      var fournisseur=row["fournisseur"]?.trim(); var ville=row["ville"]?.trim(); var cp=row["cp"]?.trim(); var produit=row["produit"]?.trim();
+fetch("./data.csv")
+.then(r => r.text())
+.then(text => {
 
-      if(fournisseur) fournisseursSet.add(fournisseur);
-      if(ville){
-        villesSet.add(ville);
-        if(!villeCoords[ville]) villeCoords[ville]=[];
-        villeCoords[ville].push([lat,lng]);
-      }
-      if(cp) cpsSet.add(cp);
-      if(produit) produitsSet.add(produit);
+Papa.parse(text,{
 
-      var popup = `<b>Fournisseur :</b> ${fournisseur||""}<br><b>Agence :</b> ${row["nom de l'agence"]||""}<br><b>Adresse :</b> ${row["adresse complete"]||""}<br><b>CP :</b> ${cp||""}<br><b>Ville :</b> ${ville||""}<br><b>Pays :</b> ${row["pays"]||""}<br><b>Email :</b> ${row["email"]||""}<br><b>Produit :</b> ${produit||""}`;
-      var iconChoisie=fournisseurIcons[fournisseur]||defaultIcon;
-      var marker=L.marker([lat,lng],{icon:iconChoisie}).addTo(map).bindPopup(popup);
-      marker.data=row; markers.push(marker);
-    });
+header:true,
+skipEmptyLines:true,
 
-    remplirSelect("filtreNom", fournisseursSet);
-    remplirSelect("filtreVille", villesSet);
-    remplirSelect("filtreCP", cpsSet);
-    remplirSelect("filtreProduit", produitsSet);
-  }});
+complete:function(results){
+
+results.data.forEach(row=>{
+
+var cleanRow={};
+
+for(let key in row){
+cleanRow[normalize(key)] = row[key];
+}
+
+row = cleanRow;
+
+var lat = parseFloat(
+row["latitude"]?.replace(",", ".")
+);
+
+var lng = parseFloat(
+row["longitude"]?.replace(",", ".")
+);
+
+if (isNaN(lat) || isNaN(lng))
+return;
+
+var fournisseur = row["fournisseur"]?.trim();
+var ville = row["ville"]?.trim();
+var cp = row["cp"]?.trim();
+var produit = row["produit"]?.trim();
+
+if(fournisseur)
+fournisseursSet.add(fournisseur);
+
+if(ville)
+villesSet.add(ville);
+
+if(cp)
+cpsSet.add(cp);
+
+if(produit)
+produitsSet.add(produit);
+
+var popup = `
+
+<b>Fournisseur :</b> ${fournisseur||""}<br>
+<b>Agence :</b> ${row["nom de l'agence"]||""}<br>
+<b>Adresse :</b> ${row["adresse complete"]||""}<br>
+<b>CP :</b> ${cp||""}<br>
+<b>Ville :</b> ${ville||""}<br>
+<b>Pays :</b> ${row["pays"]||""}<br>
+<b>Email :</b> ${row["email"]||""}<br>
+<b>Produit :</b> ${produit||""}
+
+`;
+
+var iconChoisie =
+fournisseurIcons[fournisseur]
+|| defaultIcon;
+
+var marker =
+L.marker([lat,lng],
+{icon: iconChoisie})
+.addTo(map)
+.bindPopup(popup);
+
+marker.data = row;
+
+markers.push(marker);
+
+});
+
+remplirSelect("filtreNom", fournisseursSet);
+remplirSelect("filtreVille", villesSet);
+remplirSelect("filtreCP", cpsSet);
+remplirSelect("filtreProduit", produitsSet);
+
+}
+
+});
+
 });
 
 // Remplir select
-function remplirSelect(id,set){var select=document.getElementById(id); Array.from(set).sort().forEach(v=>{var opt=document.createElement("option"); opt.value=v; opt.textContent=v; select.appendChild(opt);});}
+function remplirSelect(id,set){
 
-// Calcul distance km
-function distanceKm(lat1,lon1,lat2,lon2){
-  var R=6371; var dLat=(lat2-lat1)*Math.PI/180; var dLon=(lon2-lon1)*Math.PI/180;
-  var a=Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLon/2)**2;
-  var c=2*Math.atan2(Math.sqrt(a), Math.sqrt(1-a)); return R*c;
+var select =
+document.getElementById(id);
+
+Array.from(set)
+.sort()
+.forEach(v=>{
+
+var opt =
+document.createElement("option");
+
+opt.value=v;
+opt.textContent=v;
+
+select.appendChild(opt);
+
+});
+
 }
-
-// Mettre à jour distance
-function updateDistanceValue(){document.getElementById("distanceValue").innerText=document.getElementById("distanceSlider").value+" km"; filtrer();}
 
 // Filtrer
 function filtrer(){
-  var nom=normalize(document.getElementById("filtreNom").value);
-  var ville=normalize(document.getElementById("filtreVille").value);
-  var cp=normalize(document.getElementById("filtreCP").value);
-  var produit=normalize(document.getElementById("filtreProduit").value);
-  var maxDistance=parseInt(document.getElementById("distanceSlider").value);
-  var centre=null;
 
-  if(ville){
-    for(var v in villeCoords){
-      if(normalize(v)===ville){
-        var latTotal=0,lngTotal=0;
-        villeCoords[v].forEach(c=>{latTotal+=c[0]; lngTotal+=c[1];});
-        centre=[latTotal/villeCoords[v].length,lngTotal/villeCoords[v].length];
-        break;
-      }
-    }
-  }
+var nom =
+normalize(
+document.getElementById("filtreNom").value
+);
 
-  markers.forEach(marker=>{
-    var data=marker.data; var match=true;
-    if(nom && !normalize(data["fournisseur"]).includes(nom)) match=false;
-    if(cp && !normalize(data["cp"]).includes(cp)) match=false;
-    if(produit && normalize(data["produit"])!=produit) match=false;
+var ville =
+normalize(
+document.getElementById("filtreVille").value
+);
 
-    if(centre && maxDistance>0){
-      var lat=parseFloat(data["latitude"].replace(",","."));
-      var lng=parseFloat(data["longitude"].replace(",","."));
-      var dist=distanceKm(centre[0],centre[1],lat,lng);
-      if(dist>maxDistance) match=false;
-    }
+var cp =
+normalize(
+document.getElementById("filtreCP").value
+);
 
-    // Si distance=0, filtrage ville exact
-    if(ville && maxDistance==0){
-      if(!normalize(data["ville"]).includes(ville)) match=false;
-    }
+var produit =
+normalize(
+document.getElementById("filtreProduit").value
+);
 
-    if(match) marker.addTo(map);
-    else map.removeLayer(marker);
-  });
+markers.forEach(marker=>{
+
+var data = marker.data;
+
+var match = true;
+
+if(nom &&
+!normalize(data["fournisseur"]).includes(nom))
+match=false;
+
+if(ville &&
+!normalize(data["ville"]).includes(ville))
+match=false;
+
+if(cp &&
+!normalize(data["cp"]).includes(cp))
+match=false;
+
+if(produit &&
+normalize(data["produit"])!=produit)
+match=false;
+
+if(match)
+marker.addTo(map);
+else
+map.removeLayer(marker);
+
+});
+
 }
 
 // Reset
-function resetMap(){location.reload();}
+function resetMap(){
+location.reload();
+}
 
 // Légende
-var legend=L.control({position:'bottomright'});
-legend.onAdd=function(){
-  var div=L.DomUtil.create('div','legend'); div.style.display="flex"; div.style.gap="25px";
-  var colLeft=document.createElement("div"); var colRight=document.createElement("div");
-  var fournisseurs=["🔵 Loxam","🔴 Point P","🟢 Raboni","🟠 Cemex","🟣 CAUPAMAT CADENZ","🟡 Tersen","⚫ pum","⚪ YPREMA",
-  "🔵 Fransbonhomme","🔴 BSM","🟢 SODEXTRA","🟠 COLBER","⚪ SOL 78","🔵 SPME","🟠 VIACOV","⚫ Bouvelot TP",
-  "🟣 CHEUTIN","🟢 GO POMPE","🔵 SNB","🔴 EVA INDUSTRIES","🟢 EVO LOCATION","🟠 UTD","🟣 SCIABBARRASI RENT","🟡 LM DISTRIBUTION",
-  "⚪ IDF MARQUAGE","🔵 EUROPIERRE","🔴 RFM","🟢 ATPL CASELAS"];
-  var half=Math.ceil(fournisseurs.length/2); var left=fournisseurs.slice(0,half); var right=fournisseurs.slice(half);
-  colLeft.innerHTML="<b>Fournisseurs</b><br>";
-  left.forEach(f=>{var span=document.createElement("span"); span.innerHTML=f+"<br>"; span.onclick=()=>{document.getElementById("filtreNom").value=f.substring(2).trim(); filtrer();}; colLeft.appendChild(span);});
-  right.forEach(f=>{var span=document.createElement("span"); span.innerHTML=f+"<br>"; span.onclick=()=>{document.getElementById("filtreNom").value=f.substring(2).trim(); filtrer();}; colRight.appendChild(span);});
-  div.appendChild(colLeft); div.appendChild(colRight); return div;
+var legend = L.control({position:'bottomright'});
+
+legend.onAdd = function() {
+
+    var div = L.DomUtil.create('div','legend');
+    div.style.columnCount = 2;
+    div.style.columnGap = "20px";
+    div.style.maxHeight = "400px";
+    div.style.overflowY = "auto";
+
+    var fournisseurs = [
+        "ATPL CASELAS","BSM","Bouvelot TP","CAUPAMAT CADENZ","CHEUTIN",
+        "COLBER","EVA INDUSTRIES","EUROPIERRE","EVO LOCATION","Fransbonhomme",
+        "GO POMPE","IDF MARQUAGE","Loxam","LM DISTRIBUTION","Point P",
+        "pum","Raboni","RFM","SODEXTRA","SNB",
+        "SOL 78","SPME","SCIABBARRASI RENT","Tersen","UTD",
+        "VIACOV","YPREMA"
+    ];
+
+    var couleurs = [
+        "#1f77b4","#ff7f0e","#2ca02c","#d62728","#9467bd","#8c564b","#e377c2",
+        "#7f7f7f","#bcbd22","#17becf","#393b79","#637939","#8c6d31","#843c39",
+        "#7b4173","#5254a3","#9c9ede","#d6616b","#e7969c","#ad494a","#a55194",
+        "#6b6ecf","#b5cf6b","#ff9896","#c7c7c7","#c49c94","#f7b6d2","#c5b0d5"
+    ];
+
+    div.innerHTML = "<b>Fournisseurs</b><br>";
+
+    fournisseurs.forEach((f, i) => {
+        var span = document.createElement("span");
+        span.innerHTML = "&#9632; " + f + "<br>";
+        span.style.color = couleurs[i];
+        span.style.cursor = "pointer";
+        span.onclick = () => {
+            document.getElementById("filtreNom").value = f;
+            filtrer();
+        };
+        div.appendChild(span);
+    });
+
+    return div;
 };
+
 legend.addTo(map);
+
 </script>
 </body>
 </html>
